@@ -14,7 +14,7 @@ A backend-first portfolio project built with Spring Boot and PostgreSQL.
 ## Running the project
 
 1. Create PostgreSQL database `mini_insurance`
-2. Configure credentials in `application.yml`
+2. Configure credentials in `application.properties`
 3. Run `InsuranceApplication`
 
 ## Swagger
