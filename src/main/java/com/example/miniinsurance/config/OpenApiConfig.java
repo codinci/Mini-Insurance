@@ -18,8 +18,8 @@ public class OpenApiConfig {
                         .description("Backend API for managing insurance policies, claims, reviews, and settlements")
                         .version("v1.0.0")
                         .contact(new Contact()
-                                .name("Your Name")
-                                .email("you@example.com"))
+                                .name("codinci")
+                                .email("dkibau@gmail.com"))
                         .license(new License()
                                 .name("MIT License")));
     }
