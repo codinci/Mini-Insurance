@@ -42,10 +42,14 @@ OpenAPI specification:
 - User registration
 - User authentication
 - BCrypt password hashing
-- JWT token generation
+- JWT token generation and validation
 - User roles
-    - `CUSTOMER`
-    - `ADMIN`
+  - `CUSTOMER`
+  - `ADMIN`
+- Role-based authorization
+- Protected customer endpoints
+- Protected admin endpoints
+- Documented `401 Unauthorized` and `403 Forbidden` responses
 
 ## Authentication
 
