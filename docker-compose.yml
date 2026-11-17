@@ -1,0 +1,128 @@
+# Local development stack.
+# Setup: cp .env.example .env  (then fill in values)
+# Run:   docker compose up --build
+name: mini-insurance
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: postgres
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/postgres/init-databases.sql:/docker-entrypoint-initdb.d/01-databases.sql:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  kafka:
+    image: apache/kafka:3.9.0
+    environment:
+      CLUSTER_ID: "5L6g3nShT-eMCtK--X86sw"
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+    ports:
+      - "9092:9092"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+
+  # Writes the SeaweedFS S3 identity file into a shared volume. SeaweedFS does not read
+  # AWS_* environment variables; without -s3.config the S3 gateway accepts anonymous requests.
+  seaweedfs-config:
+    image: alpine:3.20
+    environment:
+      SEAWEEDFS_ACCESS_KEY: ${SEAWEEDFS_ACCESS_KEY:?set SEAWEEDFS_ACCESS_KEY in .env}
+      SEAWEEDFS_SECRET_KEY: ${SEAWEEDFS_SECRET_KEY:?set SEAWEEDFS_SECRET_KEY in .env}
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        mkdir -p /config
+        cat > /config/s3.json <<EOF
+        {"identities":[{"name":"app","credentials":[{"accessKey":"$${SEAWEEDFS_ACCESS_KEY}","secretKey":"$${SEAWEEDFS_SECRET_KEY}"}],"actions":["Admin","Read","Write","List","Tagging"]}]}
+        EOF
+    volumes:
+      - seaweedfsconfig:/config
+
+  seaweedfs:
+    image: chrislusf/seaweedfs:latest
+    command: >
+      server -dir=/data -ip=seaweedfs -ip.bind=0.0.0.0
+      -filer -s3 -s3.config=/etc/seaweedfs/s3.json
+    restart: unless-stopped
+    depends_on:
+      seaweedfs-config:
+        condition: service_completed_successfully
+    volumes:
+      - seaweedfsdata:/data
+      - seaweedfsconfig:/etc/seaweedfs:ro
+    ports:
+      - "127.0.0.1:8333:8333" # S3 API
+      - "127.0.0.1:9333:9333" # Master UI
+      - "127.0.0.1:8888:8888" # Filer UI
+
+  # Creates the application buckets once the S3 API answers. Uses the AWS CLI because
+  # the MinIO mc image has no shell to run the retry loop.
+  seaweedfs-init:
+    image: amazon/aws-cli:latest
+    depends_on:
+      - seaweedfs
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        until aws s3api list-buckets >/dev/null 2>&1; do
+          echo "waiting for SeaweedFS S3 API..."; sleep 2;
+        done
+        for bucket in "$${S3_QUOTES_BUCKET}" "$${S3_CLAIMS_BUCKET}"; do
+          aws s3api head-bucket --bucket "$$bucket" >/dev/null 2>&1 || aws s3api create-bucket --bucket "$$bucket";
+        done
+        echo "SeaweedFS buckets initialized successfully"
+    environment:
+      AWS_ACCESS_KEY_ID: ${SEAWEEDFS_ACCESS_KEY:?set SEAWEEDFS_ACCESS_KEY in .env}
+      AWS_SECRET_ACCESS_KEY: ${SEAWEEDFS_SECRET_KEY:?set SEAWEEDFS_SECRET_KEY in .env}
+      AWS_DEFAULT_REGION: ${AWS_REGION:-us-east-1}
+      AWS_ENDPOINT_URL: http://seaweedfs:8333
+      AWS_EC2_METADATA_DISABLED: "true"
+      S3_QUOTES_BUCKET: ${S3_QUOTES_BUCKET:-quotes}
+      S3_CLAIMS_BUCKET: ${S3_CLAIMS_BUCKET:-claims}
+
+  auth-service:
+    build:
+      context: .
+      dockerfile: auth-service/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SERVER_PORT: 8081
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/auth_db
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:?set POSTGRES_USER in .env}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+      JWT_EXPIRATION: ${JWT_EXPIRATION:?set JWT_EXPIRATION in .env}
+      DATA_ENCRYPTION_KEY: ${DATA_ENCRYPTION_KEY:?set DATA_ENCRYPTION_KEY in .env}
+    ports:
+      - "8081:8081"
+
+volumes:
+  pgdata:
+  seaweedfsdata:
+  seaweedfsconfig:

@@ -1,0 +1,7 @@
+# Keep the build context small and keep local config and secrets out of images.
+**/target/
+**/.idea/
+.git/
+.env
+**/application.properties
+**/*.iml
