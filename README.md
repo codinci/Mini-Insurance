@@ -50,6 +50,28 @@ OpenAPI specification:
 - Protected customer endpoints
 - Protected admin endpoints
 - Documented `401 Unauthorized` and `403 Forbidden` responses
+- Premium quotes for MOTOR, HEALTH, HOME, TRAVEL and LIFE
+- Quote-then-purchase policy flow
+- Encrypted storage of rating inputs (AES-GCM)
+
+## Premium Quotes
+
+Premiums are calculated on the server from risk details. Clients cannot supply a premium.
+
+1. `POST /api/customer/quotes`: submit type-specific rating inputs. Returns a quote with an annual premium (or `DECLINED` with a reason), an itemised breakdown and an expiry 30 days out.
+2. `POST /api/customer/policies`: purchase with `{"quoteId": 1, "startDate": "2027-01-01"}`. Type, coverage and premium come from the quote. Each quote can be purchased once.
+3. `GET /api/customer/quotes` and `GET /api/customer/quotes/{id}`: view your own quotes.
+4. `GET /api/admin/quotes` and `GET /api/admin/quotes/{id}`: admin view, filterable by `status` and `policyType`.
+
+The `policyType` field in the quote request selects the required fields. Unknown fields are rejected with `400`.
+
+Rating inputs are stored encrypted. Set `DATA_ENCRYPTION_KEY` to a Base64-encoded 16, 24 or 32-byte key before creating quotes, for example:
+
+```bash
+openssl rand -base64 32
+```
+
+Inputs of unpurchased quotes are purged 90 days after they expire.
 
 ## Authentication
 
